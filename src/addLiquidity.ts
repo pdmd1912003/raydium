@@ -1,78 +1,95 @@
 import { ApiV3Token, Percent } from '@raydium-io/raydium-sdk-v2';
 import BN from 'bn.js';
 import { initSdk, connection, owner, txVersion } from './config';
-import { PublicKey, Transaction } from '@solana/web3.js';
-import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountInstruction, getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
+import {
+  PublicKey,
+  Transaction,
+  SystemProgram,
+} from '@solana/web3.js';
+import {
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+  getAssociatedTokenAddress,
+  createAssociatedTokenAccountInstruction,
+  getAccount,
+  createSyncNativeInstruction,
+} from '@solana/spl-token';
 
 /**
- * Attempt to add liquidity to activate a Raydium CPMM pool.
+ * Add liquidity to Raydium CPMM pool using SOL from Phantom wallet by wrapping it into WSOL.
  */
 export const addLiquidity = async () => {
   try {
     const raydium = await initSdk();
-    console.log('Connecting to devnet...');
-
-    // Define token mints
     const mintA: ApiV3Token = {
       address: 'So11111111111111111111111111111111111111112', // WSOL
       decimals: 9,
       programId: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
       chainId: 101,
-      logoURI: 'https://raw.githubusercontent.com/solana-labs/token-list/main/assets/mainnet/So11111111111111111111111111111111111111112/logo.png',
       symbol: 'WSOL',
       name: 'Wrapped SOL',
+      logoURI: '',
       extensions: {},
       tags: ['wrapped-sol'],
     };
     const mintB: ApiV3Token = {
-      address: '97s64f6cs9YoqFcV8XuwJfudtv1KDxtEiDvv9ebPWJzZ', // Custom token
+      address: 'AUwKNLqwTBVSBiAgV4LKU145PKBMqTzmDTHp5WQSatgZ', // Custom Token
       decimals: 9,
       programId: 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb',
       chainId: 101,
-      logoURI: '',
       symbol: 'CUSTOM',
       name: 'Custom Token',
+      logoURI: '',
       extensions: {},
       tags: [],
     };
 
-    // Current pool ID
-    const poolId = new PublicKey('98Cy88utRUYei2LXw2ZL1tdRKGNLDydRdNekWGVcvqaV');
-
-    // Fetch pool information
-    console.log('Fetching pool info from Pool ID:', poolId.toBase58());
+    const poolId = new PublicKey('FmyvBJ6Dce3nsqikRBf2stuCq1b94w7nUNHXZKvs41Cq');
     const pool = await raydium.cpmm.getPoolInfoFromRpc(poolId.toString());
-    if (!pool || pool.poolInfo.type !== 'Standard') {
-      throw new Error('CPMM pool not found with Pool ID: ' + poolId.toBase58());
-    }
-    console.log('Pool info:', JSON.stringify(pool, null, 2));
 
-    // Add authority to poolInfo.config
+    if (!pool || pool.poolInfo.type !== 'Standard') {
+      throw new Error('CPMM pool not found.');
+    }
+    console.log('=== Original pool info ===');
+    console.dir(pool.poolInfo, { depth: null });
+
+    console.log('=== Pool keys ===');
+    console.dir(pool.poolKeys, { depth: null });
+
+    console.log('=== Checking authority ===');
+    console.log('pool.poolKeys.authority:', pool.poolKeys?.authority || 'undefined');
+
+    if (!pool.poolKeys?.authority) {
+      throw new Error('Pool authority is undefined.');
+    }
+
     const poolInfo = {
       ...pool.poolInfo,
+      authority: pool.poolKeys.authority,
       config: {
         ...pool.poolInfo.config,
-        authority: pool.poolKeys.authority,
       },
     };
 
-    // Check initial liquidity
-    if (new BN(pool.rpcData.baseReserve, 16).isZero() || new BN(pool.rpcData.quoteReserve, 16).isZero()) {
-      throw new Error('Pool has no initial liquidity (baseReserve or quoteReserve is zero).');
-    }
-    console.log('Pool status before adding liquidity:', pool.rpcData.status);
+    console.log('=== Built poolInfo object ===');
+    console.dir(poolInfo, { depth: null });
 
-    // Check and create Associated Token Accounts (ATAs)
-    const mintAPubkey = new PublicKey(mintA.address);
-    const mintBPubkey = new PublicKey(mintB.address);
+    if (new BN(pool.rpcData.baseReserve, 16).isZero() || new BN(pool.rpcData.quoteReserve, 16).isZero()) {
+      throw new Error('Pool has no initial liquidity.');
+    }
+
+    const mintAPubkey = new PublicKey(mintA.address); // WSOL
+    const mintBPubkey = new PublicKey(mintB.address); // CUSTOM
     const ownerPubkey = owner.publicKey;
 
-    const ataA = await getAssociatedTokenAddress(mintAPubkey, ownerPubkey, false, TOKEN_PROGRAM_ID);
-    const ataB = await getAssociatedTokenAddress(mintBPubkey, ownerPubkey, false, TOKEN_2022_PROGRAM_ID);
+    const ataA = await getAssociatedTokenAddress(mintAPubkey, ownerPubkey, false, TOKEN_PROGRAM_ID); // WSOL ATA
+    const ataB = await getAssociatedTokenAddress(mintBPubkey, ownerPubkey, false, TOKEN_2022_PROGRAM_ID); // CUSTOM ATA
 
     const transaction = new Transaction();
+    const inputAmount = new BN(100_000_000); // 0.1 SOL
+    const baseIn = true;
+    const slippage = new Percent(1, 100); // 1%
 
-    // Check ATA for WSOL
     const ataAInfo = await connection.getAccountInfo(ataA);
     if (!ataAInfo) {
       console.log('Creating ATA for WSOL...');
@@ -87,7 +104,6 @@ export const addLiquidity = async () => {
       );
     }
 
-    // Check ATA for custom token
     const ataBInfo = await connection.getAccountInfo(ataB);
     if (!ataBInfo) {
       console.log('Creating ATA for custom token...');
@@ -102,54 +118,52 @@ export const addLiquidity = async () => {
       );
     }
 
-    // Send transaction to create ATA if needed
+    console.log(`Wrapping ${inputAmount.toNumber() / 1e9} SOL into WSOL...`);
+    transaction.add(
+      SystemProgram.transfer({
+        fromPubkey: ownerPubkey,
+        toPubkey: ataA,
+        lamports: inputAmount.toNumber(),
+      }),
+      createSyncNativeInstruction(ataA)
+    );
+
     if (transaction.instructions.length > 0) {
       const { blockhash } = await connection.getLatestBlockhash();
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = ownerPubkey;
-      const signature = await connection.sendTransaction(transaction, [owner], { skipPreflight: false });
-      await connection.confirmTransaction(signature, 'confirmed');
-      console.log('ATA(s) created with transaction:', signature);
+      const txId = await connection.sendTransaction(transaction, [owner]);
+      await connection.confirmTransaction(txId, 'confirmed');
+      console.log('WSOL + ATA setup transaction sent:', txId);
     }
 
-    // Check token balances
-    console.log('Checking token balances...');
-    console.log('WSOL ATA:', ataA.toBase58());
-    console.log('Custom token ATA:', ataB.toBase58());
     const wsolAccount = await getAccount(connection, ataA, 'confirmed', TOKEN_PROGRAM_ID);
     const customTokenAccount = await getAccount(connection, ataB, 'confirmed', TOKEN_2022_PROGRAM_ID);
-    console.log(`WSOL ATA balance: ${wsolAccount.amount.toString()} lamports`);
-    console.log(`Custom token ATA balance: ${customTokenAccount.amount.toString()} tokens`);
+    console.log(`WSOL balance: ${wsolAccount.amount.toString()} lamports`);
+    console.log(`Custom Token balance: ${customTokenAccount.amount.toString()}`);
 
-    // Small liquidity amount to attempt activation
-    const poolPrice = parseFloat(pool.rpcData.poolPrice); // 0.001
-    const inputAmount = new BN(100_000_000); // 0.1 SOL
-    const baseIn = true; // WSOL is the base token
-    const slippage = new Percent(1, 100); // Slippage 1%
+    const poolPrice = parseFloat(pool.rpcData.poolPrice);
+    const multiplier = 2;
+    const amountB = inputAmount
+      .mul(new BN(Math.round(1 / poolPrice * 1_000_000_000)))
+      .div(new BN(1_000_000_000))
+      .mul(new BN(multiplier));
 
-    // Calculate required amount of token B
-    const amountB = inputAmount.mul(new BN(Math.round(1 / poolPrice * 1_000_000_000))).div(new BN(1_000_000_000)); // 0.1 SOL * (1/0.001) = 100 custom token
+    console.log(`Required CUSTOM token amount: ${amountB.toString()} lamports (${amountB.toNumber() / 1e9} CUSTOM)`);
+
     if (new BN(customTokenAccount.amount).lt(amountB)) {
-      throw new Error(`Insufficient custom token balance: ${customTokenAccount.amount.toString()} < ${amountB.toString()}`);
+      throw new Error(`Not enough CUSTOM tokens: ${customTokenAccount.amount.toString()} < ${amountB.toString()}`);
     }
 
     const solBalance = await connection.getBalance(ownerPubkey, 'confirmed');
-    console.log(`Wallet SOL balance: ${solBalance / 1e9} SOL`);
-    if (solBalance < 150_000_000) {
-      throw new Error(`Insufficient SOL balance: ${solBalance / 1e9} SOL < 0.15 SOL`);
+    if (solBalance < 0.05 * 1e9) {
+      throw new Error('Not enough SOL to cover transaction fees.');
     }
 
-    // Add liquidity
-    console.log('Attempting to add liquidity to activate pool:', {
-      poolId: poolId.toBase58(),
-      inputAmount: inputAmount.toString(),
-      amountB: amountB.toString(),
-      baseIn,
-      slippage: slippage.toFixed(),
-    });
-
+    console.log('Sending add liquidity transaction...');
     const addLiquidityResult = await raydium.cpmm.addLiquidity({
       poolInfo,
+      poolKeys: pool.poolKeys,
       inputAmount,
       baseIn,
       slippage,
@@ -159,28 +173,18 @@ export const addLiquidity = async () => {
       },
       txVersion,
     });
-    console.log('addLiquidity transaction:', JSON.stringify(addLiquidityResult, null, 2));
 
     const { execute } = addLiquidityResult;
-
-    // Execute transaction
-    console.log('Executing liquidity addition transaction...');
     const { txId } = await execute({ sendAndConfirm: true });
-    console.log('Liquidity added with txId:', txId);
+    console.log('Liquidity added! TxId:', txId);
 
-    // Check pool status after adding liquidity
     const updatedPool = await raydium.cpmm.getPoolInfoFromRpc(poolId.toString());
-    console.log('Pool status after adding liquidity:', updatedPool.rpcData.status);
-
-    process.exit(0);
+    console.log('Updated pool status:', updatedPool.rpcData.status);
   } catch (error: any) {
-    console.error('Error adding liquidity:', error.message);
-    if (error.logs) {
-      console.error('Transaction logs:', error.logs);
-    }
+    console.error('Error while adding liquidity:', error.message);
+    if (error.logs) console.error('Logs:', error.logs);
     process.exit(1);
   }
 };
 
-// Run the function
 addLiquidity();

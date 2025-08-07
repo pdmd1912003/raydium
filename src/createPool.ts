@@ -87,21 +87,7 @@ export const createPool = async () => {
     console.log(`Custom token ATA balance: ${customTokenAccount.amount.toString()} tokens`);
     console.log(`WSOL ATA balance: ${wsolTokenAccount.amount.toString()} lamports`);
 
-    if (customTokenAccount.amount < 1_000_000) {
-      throw new Error(`Insufficient custom token balance: ${customTokenAccount.amount.toString()} < 1000000`);
-    }
-
     const ownerInfo = { useSOLBalance: true };
-    if (wsolTokenAccount.amount < 1_000_000_000 && !ownerInfo.useSOLBalance) {
-      throw new Error(`Insufficient WSOL balance: ${wsolTokenAccount.amount.toString()} < 1000000000`);
-    }
-
-    const solBalance = await connection.getBalance(ownerPubkey, 'confirmed');
-    console.log(`Wallet SOL balance: ${solBalance / 1e9} SOL`);
-    if (solBalance < 1_100_000_000) {
-      throw new Error(`Insufficient SOL balance: ${solBalance / 1e9} SOL < 1.1 SOL`);
-    }
-
     const mintA = new PublicKey(customTokenMint.address);
     const mintB = new PublicKey(WSOLMint.address);
     const isSorted = mintA.toBuffer().compare(mintB.toBuffer()) < 0;
