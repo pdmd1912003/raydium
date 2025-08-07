@@ -1,0 +1,26 @@
+{
+  "name": "raydium-tutorial",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "create-pool": "ts-node src/createPool.ts",
+    "add-liquidity": "ts-node src/addLiquidity.ts",
+    "check-pool":"ts-node src/checkPool.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@raydium-io/raydium-sdk-v2": "^0.2.8-alpha",
+    "@solana/spl-token": "^0.4.13",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0"
+  },
+  "devDependencies": {
+    "@types/bn.js": "^5.2.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
+  }
+}
