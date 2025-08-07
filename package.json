@@ -6,7 +6,8 @@
   "scripts": {
     "create-pool": "ts-node src/createPool.ts",
     "add-liquidity": "ts-node src/addLiquidity.ts",
-    "check-pool":"ts-node src/checkPool.ts"
+    "check-pool":"ts-node src/checkPool.ts",
+    "swap-token":"ts-node src/swapToken.ts"
   },
   "keywords": [],
   "author": "",
